@@ -92,4 +92,4 @@ Never commit `deploy/config.yaml` if it contains secrets (see `.gitignore`).
 
 ## License
 
-Internal / project use unless otherwise specified by the repository owner.
+[MIT](LICENSE)
