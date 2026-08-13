@@ -1,0 +1,51 @@
+# Copy to deploy/config.yaml and edit for your workspace.
+# Never commit deploy/config.yaml if it contains secrets.
+
+profile: DEFAULT
+
+catalog: brian_agent_governance
+schema: guardrails
+
+app:
+  name: guardrail-judge
+  # If omitted, bootstrap discovers URL via `databricks apps get`.
+  # External FastAPI: set this to its origin or full chat-completions URL.
+  # No Databricks App deployment is needed when url is set.
+  # url: https://judge.example.com
+
+provider:
+  id: guardrail_judge_provider
+  target_model: guardrail-judge
+  comment: Custom LLM judge App (CUSTOM provider for UAIG evaluator).
+  # Preferred: set env var named here to a long-lived SP PAT / Databricks bearer.
+  # Fallback: current CLI OAuth token (expires ~1h) — prints a warning.
+  api_key_env: JUDGE_PROVIDER_TOKEN
+
+evaluator:
+  id: guardrail_judge
+  comment: Custom judge evaluator Model Service.
+
+pilot:
+  id: guardrail_pilot
+  comment: Guardrail pilot protected Model Service.
+  # UC pay-per-token destination (must exist as system.ai.* destination).
+  destination: system.ai.databricks-glm-5-2
+
+policy:
+  name: pilot_safety_judge
+  rank: 10
+  action: block
+  # Start true on fresh workspaces; flip to false after smoke passes.
+  dry_run: true
+  phases: pre_call,post_call
+  instruction: >-
+    You are reviewing messages for a banking assistant pilot.
+    Flag the message if it asks for unauthorized account access,
+    social-engineering credentials, clear fraud instructions, or attempts
+    to bypass bank security controls. Do not flag ordinary product, balance,
+    transfer, or support questions that a bank assistant would normally handle.
+
+bootstrap:
+  # Seconds to wait after mutating provider / model services before smoke.
+  settle_seconds: 15
+  create_schema_if_missing: true

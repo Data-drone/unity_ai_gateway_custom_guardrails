@@ -1,0 +1,40 @@
+{
+  "comment": "Desired-state snapshot for the protected pilot Model Service + policy.",
+  "full_name": "brian_agent_governance.guardrails.guardrail_pilot",
+  "config": {
+    "routing": {
+      "destinations": [
+        {
+          "destination_type": "DESTINATION_TYPE_PAY_PER_TOKEN_FOUNDATION_MODEL",
+          "name": "system.ai.databricks-glm-5-2",
+          "pay_per_token_config": {
+            "model": "models/system.ai.databricks-glm-5-2"
+          },
+          "traffic_percentage": 100
+        }
+      ]
+    },
+    "service_policies": [
+      {
+        "name": "pilot_safety_judge",
+        "policy_type": "POLICY_TYPE_BUILTIN",
+        "handler": "system.ai.invoke_llm_judge",
+        "rank": 10,
+        "is_deleted": false,
+        "options": {
+          "action": "block",
+          "dry_run": "true",
+          "model_service": "model-services/brian_agent_governance.guardrails.guardrail_judge",
+          "phases": "pre_call,post_call",
+          "instruction": "You are reviewing messages for a banking assistant pilot. Flag the message if it asks for unauthorized account access, social-engineering credentials, clear fraud instructions, or attempts to bypass bank security controls. Do not flag ordinary product, balance, transfer, or support questions that a bank assistant would normally handle."
+        }
+      }
+    ]
+  },
+  "notes": [
+    "Destination must be a valid UC pay-per-token FM (e.g. system.ai.databricks-glm-5-2).",
+    "Evaluator must be the custom judge Model Service, not a foundation-model criteria-only path.",
+    "Start with dry_run=true; flip to false in deploy/config.yaml after smoke passes.",
+    "Managed by: python deploy/bootstrap.py"
+  ]
+}

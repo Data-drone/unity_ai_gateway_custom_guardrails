@@ -1,0 +1,31 @@
+{
+  "comment": "Desired-state snapshot for CUSTOM provider (values filled by deploy/bootstrap.py).",
+  "full_name": "brian_agent_governance.guardrails.guardrail_judge_provider",
+  "config": {
+    "provider_type": "EXTERNAL_MODEL_PROVIDER_TYPE_CUSTOM",
+    "forward_unmanaged_paths": true,
+    "allow_all_targets": false,
+    "custom": {
+      "direct": {
+        "base_url": "https://<app-host>/v1/chat/completions",
+        "api_key": {
+          "plaintext": "REPLACE_WITH_DATABRICKS_BEARER_OR_SP_PAT"
+        }
+      }
+    },
+    "targets": [
+      {
+        "model": "guardrail-judge",
+        "native_api_types": [
+          "openai/v1/chat/completions"
+        ]
+      }
+    ]
+  },
+  "notes": [
+    "base_url MUST be the full /v1/chat/completions App URL.",
+    "Prefer a durable service-principal PAT via JUDGE_PROVIDER_TOKEN.",
+    "CLI OAuth tokens expire (~1h) and will cause evaluator 302 failures.",
+    "Managed by: python deploy/bootstrap.py"
+  ]
+}

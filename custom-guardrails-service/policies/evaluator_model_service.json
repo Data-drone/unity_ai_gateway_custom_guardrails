@@ -1,0 +1,28 @@
+{
+  "comment": "Desired-state snapshot for the custom judge evaluator Model Service.",
+  "full_name": "brian_agent_governance.guardrails.guardrail_judge",
+  "config": {
+    "routing": {
+      "destinations": [
+        {
+          "destination_type": "DESTINATION_TYPE_EXTERNAL_FOUNDATION_MODEL",
+          "name": "guardrail-judge",
+          "traffic_percentage": 100,
+          "external_model_config": {
+            "model_provider_service": "model-provider-services/brian_agent_governance.guardrails.guardrail_judge_provider",
+            "target": {
+              "model": "guardrail-judge",
+              "native_api_types": [
+                "openai/v1/chat/completions"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  },
+  "notes": [
+    "Create/update CUSTOM provider first.",
+    "Managed by: python deploy/bootstrap.py"
+  ]
+}
