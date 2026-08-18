@@ -21,11 +21,15 @@ This architecture centralises the decision:
 - the gateway either continues to the foundation-model destination or blocks
   the request.
 
-The initial judge is deliberately deterministic. The code in `judge/engine.py`
-flags high-confidence phishing, credential theft, account-takeover, and
-security-bypass patterns. Its stable HTTP contract means it can later be
-replaced or augmented with a model-based classifier without changing the
-Gateway topology or client integration.
+The initial stack ships two judges behind the same FastAPI contract:
+
+- a **deterministic** fraud/phishing regex engine in `judge/engine.py`;
+- an **LLM** personal financial advice judge in `judge/llm_engine.py` (Haiku /
+  GPT-mini class via OpenAI-compatible serving).
+
+Both return `flagged`, `confidence`, and `reason`. Gateway topology stays the
+same when you add or swap judges; only provider targets, evaluators, and
+service policies change.
 
 ## Runtime architecture
 
@@ -36,11 +40,12 @@ Client / agent
   v
 Pilot Model Service (Unity AI Gateway)
   |  destination: a governed foundation model
-  |  policy: system.ai.invoke_llm_judge
+  |  policies: system.ai.invoke_llm_judge (rank 10 fraud + rank 20 advice)
   |
-  +-- pre_call and/or post_call --> Evaluator Model Service
+  +-- pre_call and/or post_call --> Evaluator Model Services
                                       |
                                       | routes to a CUSTOM provider
+                                      | (model = guardrail-judge | guardrail-judge-llm)
                                       v
                                   Judge FastAPI service
                                       |
@@ -59,12 +64,13 @@ Otherwise: Gateway calls (or returns from) the foundation-model destination.
 | Component | Responsibility |
 |---|---|
 | Client / agent | Calls the pilot service only; it does not call the destination directly. |
-| Pilot Model Service | Public, governed model entry point. Holds routing to the destination and the service policy. |
-| `invoke_llm_judge` policy | Decides when to inspect traffic (`pre_call`, `post_call`), passes the policy instruction to the evaluator, and applies `block` when enforcement is enabled. |
-| Evaluator Model Service | A stable Databricks routing object for the judge. It sends 100% of traffic to the configured CUSTOM provider. |
-| CUSTOM provider | Stores the judge URL and credential, and translates the evaluator call into an OpenAI Chat Completions request. |
-| FastAPI judge | Authenticates the provider request, normalizes Chat Completions/Responses input, evaluates the content, and returns the decision in an OpenAI-compatible envelope. |
+| Pilot Model Service | Public, governed model entry point. Holds routing to the destination and the service policies. |
+| `invoke_llm_judge` policies | Decide when to inspect traffic (`pre_call`, `post_call`), pass the policy instruction to the evaluator, and apply `block` when enforcement is enabled. Rank 10 = fraud regex; rank 20 = financial advice LLM. |
+| Evaluator Model Services | Stable Databricks routing objects for each judge target (`guardrail-judge`, `guardrail-judge-llm`). |
+| CUSTOM provider | Stores the judge URL and credential, and translates evaluator calls into OpenAI Chat Completions requests for each target model. |
+| FastAPI judge | Authenticates the provider request, normalizes Chat Completions/Responses input, dispatches by model name, and returns the decision in an OpenAI-compatible envelope. |
 | Foundation-model destination | The actual LLM that answers allowed requests, such as a `system.ai.*` pay-per-token model. |
+| Mini model (LLM judge only) | Databricks foundation / serving endpoint. Auth is the **App service principal** with `CAN_QUERY` on a declared `serving-endpoint` resource. Optional `LLM_JUDGE_API_KEY` is local/dev only. |
 
 ## How the pieces fit together
 
@@ -73,19 +79,21 @@ order:
 
 1. A Unity Catalog schema namespaces the resources.
 2. A CUSTOM provider records the judge's full
-   `https://host/v1/chat/completions` URL and bearer secret.
-3. The evaluator Model Service routes to that provider and target model name.
+   `https://host/v1/chat/completions` URL and bearer secret, with targets for
+   both `guardrail-judge` and `guardrail-judge-llm` when `llm_policy` is set.
+3. Evaluator Model Services route to that provider (one per judge target).
 4. The pilot Model Service routes to the foundation-model destination and owns
-   the `invoke_llm_judge` policy, which references the evaluator.
+   the `invoke_llm_judge` policies (fraud + optional financial advice).
 
 At request time, the order reverses from the client's perspective: client →
 pilot → evaluator/provider → judge → pilot decision → destination (when
 allowed). The client sees a normal model response for an allowed request and a
 policy-attributed error for a blocked one.
 
-Start with `policy.dry_run: true`. The judge is called and can be measured, but
-it cannot interrupt callers. After evaluating representative labelled traffic,
-set it to `false` and rerun bootstrap to enforce.
+Start with `policy.dry_run: true` and `llm_policy.dry_run: true`. The judges
+are called and can be measured, but they cannot interrupt callers. After
+evaluating representative labelled traffic, set each to `false` and rerun
+bootstrap to enforce.
 
 ## Judge API contract
 
@@ -100,10 +108,22 @@ first assistant message's `content` is a JSON string such as:
 This envelope is important: a bare `{"flagged": true}` response is not an
 OpenAI Chat Completions response and should not be used as the provider target.
 
-The judge fails closed for empty input or an internal engine exception. Its
-current policy criteria are configuration guidance for the Gateway; the
-deterministic engine owns the actual rule matching, so production changes must
-update and test both where applicable.
+Dispatch:
+
+| Request `model` | Engine | Criteria usage |
+|---|---|---|
+| `guardrail-judge` | Deterministic regex (`judge/engine.py`) | Gateway instruction is guidance; matching is hard-coded |
+| `guardrail-judge-llm` | Mini LLM (`judge/llm_engine.py`) | Gateway `instruction` is the system prompt (personal financial advice boundary) |
+
+Both paths fail closed for empty input or internal faults. The LLM path also
+fails closed on timeout, HTTP errors, missing serving URL / App identity, or
+unparseable model JSON. The financial-advice judge is an **operational pilot
+heuristic**, not a legal determination under the Corporations Act / ASIC RG 255.
+
+On Databricks Apps, configure the mini model by adding a **Serving endpoint**
+resource with **Can query**, inject it as `SERVING_ENDPOINT` (`valueFrom:
+serving-endpoint`), and optionally set `AI_GATEWAY_URL`. Do not rely on a
+separate model API key in production.
 
 ## Hosting options
 

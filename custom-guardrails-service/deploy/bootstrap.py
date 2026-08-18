@@ -28,8 +28,12 @@ from common import (
     chat_completions_url,
     discover_app_url,
     fq_evaluator,
+    fq_llm_evaluator,
     fq_pilot,
     fq_provider,
+    has_llm_policy,
+    llm_policy_options,
+    llm_target_model,
     load_config,
     policy_options,
     resolve_auth,
@@ -68,6 +72,19 @@ def ensure_schema(client: UcClient, cfg: dict[str, Any]) -> None:
 
 
 def provider_config(cfg: dict[str, Any], base_url: str, api_key: str) -> dict[str, Any]:
+    targets = [
+        {
+            "model": cfg["provider"]["target_model"],
+            "native_api_types": ["openai/v1/chat/completions"],
+        }
+    ]
+    if has_llm_policy(cfg):
+        targets.append(
+            {
+                "model": llm_target_model(cfg),
+                "native_api_types": ["openai/v1/chat/completions"],
+            }
+        )
     return {
         "provider_type": "EXTERNAL_MODEL_PROVIDER_TYPE_CUSTOM",
         "forward_unmanaged_paths": True,
@@ -78,12 +95,7 @@ def provider_config(cfg: dict[str, Any], base_url: str, api_key: str) -> dict[st
                 "api_key": {"plaintext": api_key},
             }
         },
-        "targets": [
-            {
-                "model": cfg["provider"]["target_model"],
-                "native_api_types": ["openai/v1/chat/completions"],
-            }
-        ],
+        "targets": targets,
     }
 
 
@@ -125,18 +137,18 @@ def ensure_provider(
     return name
 
 
-def evaluator_config(cfg: dict[str, Any]) -> dict[str, Any]:
+def _evaluator_routing(cfg: dict[str, Any], target_model: str) -> dict[str, Any]:
     return {
         "routing": {
             "destinations": [
                 {
                     "destination_type": "DESTINATION_TYPE_EXTERNAL_FOUNDATION_MODEL",
-                    "name": cfg["provider"]["target_model"],
+                    "name": target_model,
                     "traffic_percentage": 100,
                     "external_model_config": {
                         "model_provider_service": f"model-provider-services/{fq_provider(cfg)}",
                         "target": {
-                            "model": cfg["provider"]["target_model"],
+                            "model": target_model,
                             "native_api_types": ["openai/v1/chat/completions"],
                         },
                     },
@@ -146,16 +158,28 @@ def evaluator_config(cfg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def ensure_evaluator(client: UcClient, cfg: dict[str, Any]) -> str:
-    name = fq_evaluator(cfg)
-    parent = f"schemas/{cfg['catalog']}.{cfg['schema']}"
-    get_path = f"/api/2.1/unity-catalog/model-services/{name}"
+def evaluator_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    return _evaluator_routing(cfg, cfg["provider"]["target_model"])
+
+
+def llm_evaluator_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    return _evaluator_routing(cfg, llm_target_model(cfg))
+
+
+def _ensure_model_service(
+    client: UcClient,
+    *,
+    fq_name: str,
+    service_id: str,
+    parent: str,
+    config: dict[str, Any],
+    comment: str | None,
+    label: str,
+) -> str:
+    get_path = f"/api/2.1/unity-catalog/model-services/{fq_name}"
     st, body = client.get(get_path)
-    config = evaluator_config(cfg)
-    comment = cfg["evaluator"].get("comment")
 
     if _ok(st):
-        # If destination is_deleted / stale provider binding, force config update.
         st2, body2 = client.patch(
             f"{get_path}?update_mask=config",
             {"config": config, "etag": body.get("etag"), "comment": comment},
@@ -166,19 +190,45 @@ def ensure_evaluator(client: UcClient, cfg: dict[str, Any]) -> str:
                 {"config": config, "etag": body.get("etag")},
             )
         if not _ok(st2):
-            _die(f"Failed to update evaluator MS {name}", body2)
-        print(f"[updated] evaluator {name}")
-        return name
+            _die(f"Failed to update {label} {fq_name}", body2)
+        print(f"[updated] {label} {fq_name}")
+        return fq_name
 
     st, body = client.post(
         f"/api/2.1/unity-catalog/model-services"
-        f"?parent={parent}&model_service_id={cfg['evaluator']['id']}",
+        f"?parent={parent}&model_service_id={service_id}",
         {"config": config, "comment": comment},
     )
     if not _ok(st):
-        _die(f"Failed to create evaluator MS {name}", body)
-    print(f"[created] evaluator {name}")
-    return name
+        _die(f"Failed to create {label} {fq_name}", body)
+    print(f"[created] {label} {fq_name}")
+    return fq_name
+
+
+def ensure_evaluator(client: UcClient, cfg: dict[str, Any]) -> str:
+    return _ensure_model_service(
+        client,
+        fq_name=fq_evaluator(cfg),
+        service_id=cfg["evaluator"]["id"],
+        parent=f"schemas/{cfg['catalog']}.{cfg['schema']}",
+        config=evaluator_config(cfg),
+        comment=cfg["evaluator"].get("comment"),
+        label="evaluator",
+    )
+
+
+def ensure_llm_evaluator(client: UcClient, cfg: dict[str, Any]) -> str:
+    llm_eval = cfg.get("llm_evaluator") or {}
+    service_id = llm_eval.get("id") or "guardrail_judge_llm"
+    return _ensure_model_service(
+        client,
+        fq_name=fq_llm_evaluator(cfg),
+        service_id=service_id,
+        parent=f"schemas/{cfg['catalog']}.{cfg['schema']}",
+        config=llm_evaluator_config(cfg),
+        comment=llm_eval.get("comment") or "LLM financial-advice judge evaluator.",
+        label="llm evaluator",
+    )
 
 
 def pilot_config(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -186,6 +236,28 @@ def pilot_config(cfg: dict[str, Any]) -> dict[str, Any]:
     # Accept system.ai.X or bare X
     dest_name = dest if dest.startswith("system.ai.") else f"system.ai.{dest}"
     model_ref = f"models/{dest_name}"
+    policies: list[dict[str, Any]] = [
+        {
+            "name": cfg["policy"]["name"],
+            "policy_type": "POLICY_TYPE_BUILTIN",
+            "handler": "system.ai.invoke_llm_judge",
+            "rank": int(cfg["policy"].get("rank", 10)),
+            "is_deleted": False,
+            "options": policy_options(cfg),
+        }
+    ]
+    if has_llm_policy(cfg):
+        pol = cfg["llm_policy"]
+        policies.append(
+            {
+                "name": pol["name"],
+                "policy_type": "POLICY_TYPE_BUILTIN",
+                "handler": "system.ai.invoke_llm_judge",
+                "rank": int(pol.get("rank", 20)),
+                "is_deleted": False,
+                "options": llm_policy_options(cfg),
+            }
+        )
     return {
         "routing": {
             "destinations": [
@@ -197,16 +269,7 @@ def pilot_config(cfg: dict[str, Any]) -> dict[str, Any]:
                 }
             ]
         },
-        "service_policies": [
-            {
-                "name": cfg["policy"]["name"],
-                "policy_type": "POLICY_TYPE_BUILTIN",
-                "handler": "system.ai.invoke_llm_judge",
-                "rank": int(cfg["policy"].get("rank", 10)),
-                "is_deleted": False,
-                "options": policy_options(cfg),
-            }
-        ],
+        "service_policies": policies,
     }
 
 
@@ -219,6 +282,25 @@ def ensure_pilot(client: UcClient, cfg: dict[str, Any]) -> str:
     comment = cfg["pilot"].get("comment")
 
     if _ok(st):
+        # Preserve inference-table settings already configured on the pilot.
+        existing = (body.get("config") or {}).get("inference_table")
+        if isinstance(existing, dict) and existing:
+            # Drop read-only / derived fields that reject on write.
+            preserved = {
+                k: v
+                for k, v in existing.items()
+                if k
+                in {
+                    "disabled",
+                    "table_name_prefix",
+                    "parent",
+                    "catalog_name",
+                    "schema_name",
+                }
+                or (k == "is_deleted" and v is False)
+            }
+            if preserved:
+                config["inference_table"] = preserved
         st2, body2 = client.patch(
             f"{get_path}?update_mask=config",
             {"config": config, "etag": body.get("etag"), "comment": comment},
@@ -277,6 +359,8 @@ def main() -> None:
 
     ensure_provider(client, cfg, base_url, api_key)
     ensure_evaluator(client, cfg)
+    if has_llm_policy(cfg):
+        ensure_llm_evaluator(client, cfg)
     ensure_pilot(client, cfg)
 
     settle = int((cfg.get("bootstrap") or {}).get("settle_seconds", 15))
@@ -290,9 +374,14 @@ def main() -> None:
     print(f"host:        {host}")
     print(f"provider:    {fq_provider(cfg)}")
     print(f"evaluator:   {fq_evaluator(cfg)}")
+    if has_llm_policy(cfg):
+        print(f"llm eval:    {fq_llm_evaluator(cfg)}")
     print(f"pilot:       {fq_pilot(cfg)}")
     print(f"destination: {cfg['pilot']['destination']}")
     print(f"policy:      {cfg['policy']['name']} (dry_run={dry})")
+    if has_llm_policy(cfg):
+        llm_dry = llm_policy_options(cfg)["dry_run"]
+        print(f"llm policy:  {cfg['llm_policy']['name']} (dry_run={llm_dry})")
     print(f"api_key:     {key_source}")
     print("\nNext: python deploy/smoke_test.py --config <config>")
 

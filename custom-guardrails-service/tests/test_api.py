@@ -1,10 +1,12 @@
 import os
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
 os.environ["JUDGE_API_KEY"] = "test-judge-key"
 
 from app import app  # noqa: E402
+from judge.contracts import JudgeDecision
 
 client = TestClient(app)
 AUTH = {"Authorization": "Bearer test-judge-key"}
@@ -14,6 +16,15 @@ def test_health():
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_list_models_includes_both_judges():
+    response = client.get("/v1/models", headers=AUTH)
+    assert response.status_code == 200
+    ids = {item["id"] for item in response.json()["data"]}
+    assert "guardrail-judge" in ids
+    assert "guardrail-judge-llm" in ids
+    assert "westpac-guardrail-judge-llm" in ids
 
 
 def test_chat_completions_requires_auth():
@@ -62,6 +73,39 @@ def test_chat_completions_deny():
     assert response.status_code == 200
     content = response.json()["choices"][0]["message"]["content"]
     assert '"flagged":true' in content.replace(" ", "")
+
+
+def test_chat_completions_llm_model_dispatches():
+    mocked = JudgeDecision(
+        flagged=True,
+        confidence=0.91,
+        reason="Personalised product recommendation requested.",
+    )
+    with patch("app.evaluate_llm", new_callable=AsyncMock, return_value=mocked) as llm:
+        response = client.post(
+            "/v1/chat/completions",
+            headers=AUTH,
+            json={
+                "model": "guardrail-judge-llm",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "Flag personal financial advice only.",
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            "Given my income and debts, which home loan should I take?"
+                        ),
+                    },
+                ],
+            },
+        )
+    assert response.status_code == 200
+    llm.assert_awaited_once()
+    content = response.json()["choices"][0]["message"]["content"]
+    assert '"flagged":true' in content.replace(" ", "")
+    assert "Personalised product" in content
 
 
 def test_responses_deny():

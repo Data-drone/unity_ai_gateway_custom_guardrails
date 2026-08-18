@@ -40,6 +40,9 @@ def _summarize(status: int, body: Any) -> str:
     if status == 200:
         choice = (((body.get("choices") or [{}])[0]).get("message") or {})
         content = choice.get("content") or choice.get("reasoning_content") or ""
+        lowered = content.lower()
+        if "blocked by" in lowered or "service policy" in lowered:
+            return f"BLOCKED model={body.get('model')} preview={content[:100]!r}"
         return f"ALLOW model={body.get('model')} preview={content[:80]!r}"
     msg = ""
     if isinstance(body, dict):
@@ -89,11 +92,17 @@ def main() -> None:
         st, body = _chat(client, model, DENY_PROMPT)
         print(f"  deny  try{i+1}: {_summarize(st, body)}")
         msg = json.dumps(body).lower()
-        if st in (400, 403) and (
+        blocked_by_policy = (
             "pilot_safety_judge" in msg
             or "phishing" in msg
             or "blocked" in msg
-        ):
+            or "service policy" in msg
+        )
+        if st in (400, 403) and blocked_by_policy:
+            deny_ok = True
+            break
+        # Some Gateway builds surface the policy block as HTTP 200 assistant text.
+        if st == 200 and blocked_by_policy and "blocked" in msg:
             deny_ok = True
             break
         if "failed to evaluate" in msg or "not live" in msg:

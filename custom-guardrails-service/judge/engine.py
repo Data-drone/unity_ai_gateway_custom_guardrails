@@ -15,8 +15,8 @@ from typing import Iterable
 
 from .contracts import JudgeDecision, JudgeRequest
 
-# High-precision deny patterns for the pilot scaffold. Semantic coverage can later
-# call an upstream LLM; keep these deterministic and fail-closed on engine errors.
+# High-precision deny patterns for the fraud/phishing judge. Personal financial
+# advice is handled by the separate LLM path (judge/llm_engine.py).
 _DENY_PATTERNS: tuple[tuple[str, str], ...] = (
     (
         r"\b(socially\s+engineer|social\s+engineering)\b",

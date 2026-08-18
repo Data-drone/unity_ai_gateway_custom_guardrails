@@ -7,9 +7,9 @@ Fresh laptop + fresh workspace. No Terraform. Python SDK/REST bootstrap + Apps C
 | Layer | Resource | How |
 |---|---|---|
 | Judge service | Databricks App (`app.name`) | `databricks apps deploy` |
-| CUSTOM provider | `….<provider.id>` | `deploy/bootstrap.py` |
-| Evaluator Model Service | `….<evaluator.id>` | `deploy/bootstrap.py` |
-| Pilot Model Service + policy | `….<pilot.id>` + `pilot_safety_judge` | `deploy/bootstrap.py` |
+| CUSTOM provider | `….<provider.id>` (targets: regex + LLM) | `deploy/bootstrap.py` |
+| Evaluator Model Services | `….<evaluator.id>` + `….<llm_evaluator.id>` | `deploy/bootstrap.py` |
+| Pilot Model Service + policies | `….<pilot.id>` + fraud + financial-advice judges | `deploy/bootstrap.py` |
 
 Desired-state JSON snapshots live under `policies/` (documentation; bootstrap is authoritative).
 
@@ -36,7 +36,8 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 cp deploy/config.example.yaml deploy/config.yaml
-# edit: profile, catalog, schema, destination, dry_run
+# edit: profile, catalog, schema, destination, dry_run flags
+# for LLM judge: add App serving-endpoint resource (CAN_QUERY) + optional AI_GATEWAY_URL
 export JUDGE_PROVIDER_TOKEN='<sp-pat-or-long-lived-bearer>'
 ```
 
@@ -55,13 +56,17 @@ databricks apps deploy guardrail-judge --profile <profile>
 databricks apps get guardrail-judge --profile <profile> -o json
 ```
 
-Confirm the App is `RUNNING` and note its `url`.
+Confirm the App is `RUNNING` and note its `url`. Before relying on
+`pilot_financial_advice_judge`:
 
-Optional direct App smoke (with a Databricks bearer):
+1. In the App **Resources** UI (or bundle), add a **Serving endpoint** with
+   **Can query** (resource key `serving-endpoint`).
+2. Optionally set `AI_GATEWAY_URL` to
+   `https://<workspace-id>.ai-gateway.cloud.databricks.com/mlflow/v1`.
+3. Redeploy so `SERVING_ENDPOINT` injects and the App SP receives `CAN_QUERY`.
 
-```bash
-# POST {url}/v1/chat/completions with messages; expect JSON {"flagged":...}
-```
+Auth for the mini model is the App service principal — not a separate
+`LLM_JUDGE_API_KEY` (that env is local/dev override only).
 
 ### 3. Bootstrap UC wiring
 
@@ -72,9 +77,10 @@ python deploy/bootstrap.py --config deploy/config.yaml
 Internal order (do not reorder):
 
 1. Ensure schema  
-2. Create/update CUSTOM provider (`base_url` = `{app_url}/v1/chat/completions`)  
-3. Create/update evaluator Model Service → provider  
-4. Create/update pilot Model Service → destination + `invoke_llm_judge` policy  
+2. Create/update CUSTOM provider (`base_url` = `{app_url}/v1/chat/completions`, both targets)  
+3. Create/update fraud evaluator Model Service → `guardrail-judge`  
+4. Create/update LLM evaluator Model Service → `guardrail-judge-llm` (when `llm_policy` is set)  
+5. Create/update pilot Model Service → destination + both `invoke_llm_judge` policies  
 
 ### 4. Smoke
 
@@ -88,9 +94,12 @@ Expect:
 - **deny** phishing prompt → HTTP 400 blocked by `pilot_safety_judge`  
   (if `dry_run: true`, deny may return 200 — that is expected)
 
+Calibrate the financial-advice judge separately with `eval/labeled_cases.json`
+entries marked `"judge": "llm"` before flipping `llm_policy.dry_run`.
+
 ### 5. Enforce
 
-1. Set `policy.dry_run: false` in `deploy/config.yaml`
+1. Set `policy.dry_run: false` and/or `llm_policy.dry_run: false` in `deploy/config.yaml`
 2. Re-run `python deploy/bootstrap.py --config deploy/config.yaml`
 3. Re-run `python deploy/smoke_test.py --config deploy/config.yaml`
 

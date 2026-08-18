@@ -7,7 +7,24 @@ command:
   - "8000"
 
 env:
-  # Required when registering this App as a CUSTOM model provider.
-  # Store the value in a Databricks secret and wire it via the Apps UI / resources.
   - name: JUDGE_API_KEY
     value: ""
+
+  # Endpoint name (also used as OpenAI model id). App SP gets CAN_QUERY via
+  # the serving-endpoint App resource (attached with apps create-update).
+  - name: SERVING_ENDPOINT
+    value: "databricks-claude-haiku-4-5"
+
+  - name: LLM_JUDGE_MODEL
+    value: "databricks-claude-haiku-4-5"
+
+  - name: AI_GATEWAY_URL
+    value: "https://7474653654327867.ai-gateway.cloud.databricks.com/mlflow/v1"
+
+  - name: LLM_JUDGE_BASE_URL
+    value: ""
+  - name: LLM_JUDGE_API_KEY
+    value: ""
+
+  - name: LLM_JUDGE_TIMEOUT_SECONDS
+    value: "8"
