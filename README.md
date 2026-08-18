@@ -12,13 +12,15 @@ the foundation-model destination.
 
 ```text
 Client → Pilot Model Service
-            │  invoke_llm_judge (pre_call / post_call)
+            │  invoke_llm_judge ×2 (fraud regex + financial-advice LLM)
             ▼
-         Evaluator Model Service
+         Evaluator Model Services
             │
             ▼
-         CUSTOM provider → Databricks App (guardrail-judge)
-         returns {"flagged","confidence","reason"}
+         CUSTOM provider → Databricks App
+            │                 ├ guardrail-judge     (regex fraud/phishing)
+            │                 └ guardrail-judge-llm (mini-LLM advice boundary)
+            └ returns {"flagged","confidence","reason"}
 
          Destination (example): system.ai.databricks-glm-5-2
 ```

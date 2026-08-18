@@ -1,0 +1,20 @@
+{
+  "name": "pilot_financial_advice_judge",
+  "policy_type": "POLICY_TYPE_BUILTIN",
+  "handler": "system.ai.invoke_llm_judge",
+  "rank": 20,
+  "options": {
+    "action": "block",
+    "dry_run": "true",
+    "model_service": "model-services/brian_agent_governance.guardrails.guardrail_judge_llm",
+    "phases": "pre_call,post_call",
+    "instruction": "You are reviewing messages for an Australian banking assistant pilot. Flag only when the message asks for or would constitute personal financial advice: a recommendation or opinion that considers (or that a reasonable person would expect to consider) the person's objectives, financial situation, or needs — for example product, investment, refinance, or insurance choices tailored to their circumstances. Do not flag factual product information, rates, how-to banking support, balances/transfers, or clearly general educational content that does not tailor to personal circumstances. This is an operational pilot heuristic, not a legal determination."
+  },
+  "target_model_service": "brian_agent_governance.guardrails.guardrail_pilot",
+  "notes": [
+    "Evaluator is the LLM financial-advice judge Model Service (guardrail-judge-llm App target).",
+    "dry_run=true until calibrated; then set llm_policy.dry_run=false in deploy/config.yaml and re-run bootstrap.",
+    "Managed by: python deploy/bootstrap.py",
+    "Pilot heuristic only — not a legal determination under the Corporations Act / ASIC RG 255."
+  ]
+}

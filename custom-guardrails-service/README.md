@@ -28,15 +28,17 @@ python deploy/smoke_test.py --config deploy/config.yaml
 
 ```text
 Client → guardrail_pilot
-            │  invoke_llm_judge (pre_call, post_call)
+            │  invoke_llm_judge ×2 (fraud + financial advice)
             ▼
-         guardrail_judge  (Evaluator Model Service)
+         guardrail_judge / guardrail_judge_llm  (Evaluators)
             │
             ▼
          guardrail_judge_provider  (CUSTOM)
             │
             ▼
-         Databricks App guardrail-judge
+         Databricks App
+            ├ guardrail-judge     → regex fraud/phishing
+            └ guardrail-judge-llm → mini-LLM personal advice boundary
          returns {"flagged","confidence","reason"}
 
          chat destination (example): system.ai.databricks-glm-5-2

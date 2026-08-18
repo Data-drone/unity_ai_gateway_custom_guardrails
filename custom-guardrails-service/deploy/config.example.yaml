@@ -16,6 +16,8 @@ app:
 provider:
   id: guardrail_judge_provider
   target_model: guardrail-judge
+  # Second App target for the LLM financial-advice judge.
+  llm_target_model: guardrail-judge-llm
   comment: Custom LLM judge App (CUSTOM provider for UAIG evaluator).
   # Preferred: set env var named here to a long-lived SP PAT / Databricks bearer.
   # Fallback: current CLI OAuth token (expires ~1h) — prints a warning.
@@ -23,7 +25,11 @@ provider:
 
 evaluator:
   id: guardrail_judge
-  comment: Custom judge evaluator Model Service.
+  comment: Custom judge evaluator Model Service (deterministic fraud/phishing).
+
+llm_evaluator:
+  id: guardrail_judge_llm
+  comment: LLM financial-advice judge evaluator Model Service.
 
 pilot:
   id: guardrail_pilot
@@ -44,6 +50,26 @@ policy:
     social-engineering credentials, clear fraud instructions, or attempts
     to bypass bank security controls. Do not flag ordinary product, balance,
     transfer, or support questions that a bank assistant would normally handle.
+
+# Second Gateway policy: mini-LLM personal financial advice boundary.
+# Omit this block to keep a single (regex-only) judge.
+llm_policy:
+  name: pilot_financial_advice_judge
+  rank: 20
+  action: block
+  dry_run: true
+  phases: pre_call,post_call
+  instruction: >-
+    You are reviewing messages for an Australian banking assistant pilot.
+    Flag only when the message asks for or would constitute personal financial
+    advice: a recommendation or opinion that considers (or that a reasonable
+    person would expect to consider) the person's objectives, financial
+    situation, or needs — for example product, investment, refinance, or
+    insurance choices tailored to their circumstances.
+    Do not flag factual product information, rates, how-to banking support,
+    balances/transfers, or clearly general educational content that does not
+    tailor to personal circumstances.
+    This is an operational pilot heuristic, not a legal determination.
 
 bootstrap:
   # Seconds to wait after mutating provider / model services before smoke.

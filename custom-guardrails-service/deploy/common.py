@@ -153,18 +153,51 @@ def fq_evaluator(cfg: dict[str, Any]) -> str:
     return f"{cfg['catalog']}.{cfg['schema']}.{cfg['evaluator']['id']}"
 
 
+def fq_llm_evaluator(cfg: dict[str, Any]) -> str:
+    llm_eval = cfg.get("llm_evaluator") or {}
+    eval_id = llm_eval.get("id") or "guardrail_judge_llm"
+    return f"{cfg['catalog']}.{cfg['schema']}.{eval_id}"
+
+
 def fq_pilot(cfg: dict[str, Any]) -> str:
     return f"{cfg['catalog']}.{cfg['schema']}.{cfg['pilot']['id']}"
 
 
-def policy_options(cfg: dict[str, Any]) -> dict[str, str]:
-    pol = cfg["policy"]
+def llm_target_model(cfg: dict[str, Any]) -> str:
+    return str(
+        ((cfg.get("provider") or {}).get("llm_target_model")) or "guardrail-judge-llm"
+    ).strip()
+
+
+def has_llm_policy(cfg: dict[str, Any]) -> bool:
+    return isinstance(cfg.get("llm_policy"), dict) and bool(cfg["llm_policy"].get("name"))
+
+
+def _policy_options_for(
+    pol: dict[str, Any],
+    *,
+    model_service: str,
+) -> dict[str, str]:
     dry = pol.get("dry_run", True)
     dry_s = "true" if dry in (True, "true", "True", 1) else "false"
     return {
         "action": str(pol.get("action", "block")),
         "dry_run": dry_s,
         "instruction": str(pol["instruction"]).strip(),
-        "model_service": f"model-services/{fq_evaluator(cfg)}",
+        "model_service": model_service,
         "phases": str(pol.get("phases", "pre_call,post_call")),
     }
+
+
+def policy_options(cfg: dict[str, Any]) -> dict[str, str]:
+    return _policy_options_for(
+        cfg["policy"],
+        model_service=f"model-services/{fq_evaluator(cfg)}",
+    )
+
+
+def llm_policy_options(cfg: dict[str, Any]) -> dict[str, str]:
+    return _policy_options_for(
+        cfg["llm_policy"],
+        model_service=f"model-services/{fq_llm_evaluator(cfg)}",
+    )
